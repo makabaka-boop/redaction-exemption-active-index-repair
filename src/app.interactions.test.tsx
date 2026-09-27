@@ -796,6 +796,46 @@ describe('单次豁免：工作台交互', () => {
     expect(workPreview(c)).toBe('### ###')
   })
 
+  it('停用前置短语后再对启用短语豁免：豁免落到正确短语，预览/计数/采纳一致', async () => {
+    // 回归：停用前面的短语会压缩“启用短语序列”，会话层曾把其后启用条目
+    // 的豁免映射到错误的启用短语——要么豁免了别的短语（重叠命中处错误
+    // 露出），要么被防御性过滤静默丢弃（计数不减、遮蔽不变）。
+    const c = await renderApp('ab ab', ['x', 'a', 'ab'])
+    // 先停用第 0 行 'x'：启用序列压缩为 ['a','ab']
+    click(rowCheck(rows(c)[0]))
+    expect(rowCount(rows(c)[0]).textContent).toBe('未统计')
+
+    // 对第 1 行 'a' 豁免起点 0 的命中
+    const rA = rows(c)[1]
+    typePos(rowPosInput(rA)!, '0')
+    click(rowExemptBtn(rA))
+    expect(notice(c)).toBeNull()
+    expect(rowChips(rA)).toHaveLength(1)
+    // 'a' 的有效命中 2−1=1，带“（豁免 1）”标注；'ab' 行不受影响仍为 2
+    expect(rowCount(rA).textContent!.startsWith('1')).toBe(true)
+    expect(rowCount(rA).textContent).toContain('豁免 1')
+    expect(rowCount(rows(c)[2]).textContent!.startsWith('2')).toBe(true)
+    expect(rowCount(rows(c)[2]).textContent).not.toContain('豁免')
+    // 'a'@0 被放过，但同起点 'ab' 仍遮蔽两个单词 → '## ##'
+    // （错误映射会豁免 'ab'，得到 '#b #b' 露出仍应遮蔽的 b）
+    expect(workPreview(c)).toBe('## ##')
+
+    // 采纳稿与下载内容必须和屏幕预览逐字符一致
+    click(buttonByText(c, '采纳为下载稿'))
+    expect(adoptedPreview(c)).toBe('## ##')
+
+    // 再对唯一覆盖词场景验证“静默丢弃”：停掉 'ab' 后两处 'a' 豁免都成为
+    // 唯一覆盖的去除——位置 0 与 3 都露出（旧实现下豁免曾落到错词/越界）
+    click(rowCheck(rows(c)[2]))
+    const rA2 = rows(c)[1]
+    typePos(rowPosInput(rA2)!, '3')
+    click(rowExemptBtn(rA2))
+    expect(notice(c)).toBeNull()
+    expect(workPreview(c)).toBe('ab ab')
+    expect(rowCount(rA2).textContent!.startsWith('0')).toBe(true)
+    expect(rowCount(rA2).textContent).toContain('豁免 2')
+  })
+
   it('改值后旧豁免清空；删除短语连带豁免；新增条目空豁免', async () => {
     const c = await renderApp('abc abc bbb', ['abc', 'bbb'])
     const r0 = rows(c)[0]

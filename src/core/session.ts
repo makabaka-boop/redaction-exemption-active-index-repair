@@ -75,16 +75,17 @@ export interface LoadedSession {
 
 /**
  * 把工作集下标上的豁免簿折叠为 maskText 的启用序列豁免列表。
- * 停用条目的豁免槽按不变式恒为空，这里仍做一次防御性跳过。
+ * 停用条目不占启用序列位置（其豁免槽按不变式恒为空，这里同样跳过）。
  */
 function toHits(entries: readonly PatternEntry[], exemptions: ExemptionMap): ExemptionHit[] {
   const hits: ExemptionHit[] = []
+  // k 是**启用序列**下标（与 maskText 的 enabledPatterns / result.counts
+  // 同序）：只在遇到启用条目时自增；停用条目不占启用序列位置，绝不能自增，
+  // 否则其后所有启用条目的豁免都会被映射到错误的启用短语（下标漂移），
+  // 表现为豁免作用于别的短语或被防御性过滤静默丢弃。
   let k = 0
   for (let i = 0; i < entries.length; i++) {
-    if (!entries[i].enabled) {
-      k++
-      continue
-    }
+    if (!entries[i].enabled) continue
     for (const start of exemptions[i]) hits.push({ pattern: k, start })
     k++
   }

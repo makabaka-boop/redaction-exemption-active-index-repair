@@ -300,6 +300,39 @@ describe('豁免随短语生命周期清理', () => {
     expect(on.result.masked).toBe(snapshot.result.masked)
   })
 
+  it('停用前置条目后，对启用条目登记豁免仍映射到正确的启用短语', () => {
+    // 回归：toHits 曾在停用条目上也自增启用序列下标，导致其后所有启用
+    // 条目的豁免漂移到错误的启用短语（或被核心层防御性过滤静默丢弃）。
+    const { snapshot: s0 } = load('ab ab', ['x', 'a', 'ab'])
+    const off = setPatternEnabled(s0, 0, false) // 启用序列压缩为 ['a','ab']
+    const s = addExemption(off, 1, 0) // 豁免工作集条目 'a' 在 0 处的命中
+    // 豁免必须记在启用序列第 0 条 'a' 上，而不是第 1 条 'ab'：
+    expect([...s.result.exemptCounts]).toEqual([1, 0])
+    // 'a'@0 被放过，但两处 'ab'（0..1、3..4）仍完整遮蔽两个单词；
+    // 旧实现把豁免漂移到 'ab' 上会得到 '#b #b'（位置 1、4 错误露出）
+    expect(s.result.masked).toBe('## ##')
+    const mapped = countByEntry(s.entries, s.result)
+    expect(mapped).toEqual([null, 1, 2]) // 'a' 有效命中 2−1=1，'ab' 仍为 2
+
+    // 多个停用前置条目：漂移会更大，这里再压掉一个启用条目后验证
+    const off2 = setPatternEnabled(s, 2, false) // 只剩 'a' 启用
+    const s2 = addExemption(off2, 1, 3) // 'a' 在 3 处的第二次命中
+    expect([...s2.result.exemptCounts]).toEqual([2])
+    expect(s2.result.masked).toBe('ab ab')
+    expect(countByEntry(s2.entries, s2.result)).toEqual([null, 0, null])
+  })
+
+  it('停用前置条目 + 同起点长短命中：豁免短词不抹掉长词遮蔽', () => {
+    // 同起点的 'a' 与 'ab'：豁免 'a' 只放过它自身的那一个字符区间，
+    // 'ab' 的覆盖必须保留（即使前面隔着停用条目，映射也不能错位）。
+    const { snapshot: s0 } = load('ab', ['zzz', 'a', 'ab'])
+    const off = setPatternEnabled(s0, 0, false)
+    const s = addExemption(off, 1, 0)
+    expect(s.result.masked).toBe('##')
+    expect([...s.result.counts]).toEqual([0, 1])
+    expect([...s.result.exemptCounts]).toEqual([1, 0])
+  })
+
   it('删除短语：其豁免槽整体移除；其他条目的豁免随下标保留', () => {
     const { snapshot } = load(text, ['abc', 'b'])
     let s = addExemption(snapshot, 0, 4) // 豁免中间 abc
