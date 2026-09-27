@@ -321,6 +321,64 @@ describe('豁免随短语生命周期清理', () => {
   })
 })
 
+describe('停用条目后的豁免映射（启用序列下标）', () => {
+  it('停用前序条目后，新豁免不错位到相邻启用短语、不泄露未获批范围', () => {
+    // 工作集：zz（停用）、ab、abc；启用序列为 [ab, abc]
+    const { snapshot } = load('abc', ['zz', 'ab', 'abc'])
+    const off = setPatternEnabled(snapshot, 0, false)
+    expect(off.result.masked).toBe('###')
+
+    // 豁免 'ab'@0：只放过 ab 的命中；abc@0 是另一条的命中，仍覆盖 0..2
+    const ex = addExemption(off, 1, 0)
+    expect(ex.exemptions[1]).toEqual([0])
+    expect(ex.result.masked).toBe('###') // abc 的遮蔽保留，位置 2 不得露出
+    expect([...ex.result.counts]).toEqual([0, 1]) // ab 有效 0、abc 有效 1
+    expect([...ex.result.exemptCounts]).toEqual([1, 0])
+    // 采纳稿与获批保留范围一致
+    expect(adopt(ex).masked).toBe('###')
+  })
+
+  it('停用前序条目后，新豁免不被静默丢弃（启用序列不越界）', () => {
+    // 工作集：zz（停用）、abc；启用序列只有 [abc]
+    const { snapshot } = load('abc abc', ['zz', 'abc'])
+    const off = setPatternEnabled(snapshot, 0, false)
+    const ex = addExemption(off, 1, 0) // 豁免 abc@0
+    expect(ex.exemptions[1]).toEqual([0])
+    expect(ex.result.masked).toBe('abc ###') // 只放过第一次
+    expect([...ex.result.counts]).toEqual([1])
+    expect([...ex.result.exemptCounts]).toEqual([1])
+    expect(adopt(ex).masked).toBe('abc ###')
+  })
+
+  it('先登记豁免再停用前序条目：停用触发的重算保持既有豁免归位', () => {
+    const { snapshot } = load('abc abc', ['zz', 'abc'])
+    const ex = addExemption(snapshot, 1, 0) // 全部启用时豁免 abc@0
+    expect(ex.result.masked).toBe('abc ###')
+    // 停用前序条目 zz：重算后 abc 的豁免仍作用于 abc
+    const off = setPatternEnabled(ex, 0, false)
+    expect(off.exemptions[1]).toEqual([0])
+    expect(off.result.masked).toBe('abc ###')
+    expect([...off.result.counts]).toEqual([1])
+    expect([...off.result.exemptCounts]).toEqual([1])
+  })
+
+  it('停用中间条目后，其前后启用短语的豁免各自归位、计数按原始下标取数', () => {
+    // 工作集：p、q（停用）、s；启用序列为 [p, s]
+    const { snapshot } = load('p s p s', ['p', 'q', 's'])
+    const off = setPatternEnabled(snapshot, 1, false)
+    let s = addExemption(off, 2, 2) // 豁免 s@2（停用条目之后）
+    s = addExemption(s, 0, 0) // 豁免 p@0（停用条目之前）
+    expect(s.exemptions).toEqual([[0], [], [2]])
+    // 剩余遮蔽：p@4 与 s@6
+    expect(s.result.masked).toBe('p s # #')
+    expect([...s.result.counts]).toEqual([1, 1]) // 启用序列 [p, s] 各有效 1
+    expect([...s.result.exemptCounts]).toEqual([1, 1])
+    // 映射回完整工作集：停用项计数为 null、豁免数为 0
+    expect(countByEntry(s.entries, s.result)).toEqual([1, null, 1])
+    expect(exemptCountByEntry(s.entries, s.result)).toEqual([1, 0, 1])
+  })
+})
+
 describe('载入清空 / 采纳固化 / 放弃回滚', () => {
   it('载入新文本：旧豁免全部清空（即使新文本相似）', () => {
     const first = load('abc abc', ['abc'])
